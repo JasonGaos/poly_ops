@@ -1,0 +1,24 @@
+# Build directories
+build/
+build_sve/
+build_neon/
+
+# Compiled executables
+test_poly_ops_neon
+test_poly_ops_sve
+
+# Object files
+*.o
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
