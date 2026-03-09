@@ -1,0 +1,1 @@
+/usr/bin/cc  -march=armv8-a+sve -Wall -Wextra -O2 CMakeFiles/test_poly_ops_sve.dir/test.c.o CMakeFiles/test_poly_ops_sve.dir/src/poly_c.c.o CMakeFiles/test_poly_ops_sve.dir/src/poly_caddq_asm_sve.S.o CMakeFiles/test_poly_ops_sve.dir/src/poly_chknorm_asm_sve.S.o -o test_poly_ops_sve 

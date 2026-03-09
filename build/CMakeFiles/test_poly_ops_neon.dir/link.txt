@@ -1,0 +1,1 @@
+/usr/bin/cc  -march=armv8-a -Wall -Wextra -O2 CMakeFiles/test_poly_ops_neon.dir/test.c.o CMakeFiles/test_poly_ops_neon.dir/src/poly_c.c.o CMakeFiles/test_poly_ops_neon.dir/src/poly_caddq_asm.S.o CMakeFiles/test_poly_ops_neon.dir/src/poly_chknorm_asm.S.o -o test_poly_ops_neon 

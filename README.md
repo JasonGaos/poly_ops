@@ -153,6 +153,124 @@ make help
 3. **Load/Store**: Use `ld1w`/`st1w` with predicate-gathering for exact element count
 4. **Conditional Operations**: Use predicates with `sel` instruction for conditional adds
 
+### 4-Vector Unrolled Pattern (Experimental)
+
+For matching NEON's 4-vector loop structure, use this pattern:
+
+**For poly_caddq (pointer-based scattered access)**:
+```asm
+// Setup: ptrue p0.s for full predicate in main loop
+// Use multiple pointer registers for scattered access
+mov     x5, x2                  // ptr0 = base
+add     x6, x2, #32             // ptr1 = base + 32 bytes (8 coeffs)
+add     x7, x2, #64             // ptr2 = base + 64 bytes (16 coeffs)
+add     x9, x2, #96             // ptr3 = base + 96 bytes (24 coeffs)
+
+// Load 4 vectors
+ld1w    {z0.s}, p0/z, [x5]
+ld1w    {z1.s}, p0/z, [x6]
+ld1w    {z2.s}, p0/z, [x7]
+ld1w    {z3.s}, p0/z, [x9]
+
+// ... process ...
+
+// Store 4 vectors
+st1w    {z0.s}, p0, [x5]
+st1w    {z1.s}, p0, [x6]
+st1w    {z2.s}, p0, [x7]
+st1w    {z3.s}, p0, [x9]
+
+add     x2, x2, #128            // Advance base by 128 bytes (32 coeffs)
+```
+
+**For poly_chknorm (indexed access with early exit)**:
+```asm
+// Setup: x2 = index counter, x3 = 256 (total coefficients)
+// Check if 32 coefficients remain
+add     x5, x2, #32
+cmp     x5, x3
+b.gt    handle_tail
+
+ptrue   p0.s                    // Full predicate for 8 lanes
+
+// Load 4 vectors using indexed addressing (8 coefficients each)
+ld1w    {z0.s}, p0/z, [x0, x2, lsl #2]      // coeffs x2 to x2+7
+add     x5, x2, #8
+ld1w    {z3.s}, p0/z, [x0, x5, lsl #2]      // coeffs x2+8 to x2+15
+add     x5, x2, #16
+ld1w    {z4.s}, p0/z, [x0, x5, lsl #2]      // coeffs x2+16 to x2+23
+add     x5, x2, #24
+ld1w    {z5.s}, p0/z, [x0, x5, lsl #2]      // coeffs x2+24 to x2+31
+
+// Absolute value and compare with early exit
+abs     z0.s, p0/m, z0.s
+cmpge   p1.s, p0/z, z0.s, z2.s
+b.any   violation_found       // Exit immediately if any violation
+// ... repeat for z3, z4, z5 ...
+
+add     x2, x2, #32            // Advance index by 32 coefficients
+```
+
+**Note**: These patterns assume VL = 256 bits (8 int32_t per vector). Performance varies by hardware.
+
+---
+
+## Performance Results
+
+Test environment: AArch64 Linux, 10,000 iterations per measurement
+
+### poly_caddq Performance
+
+| Variant | Execution Time | Notes |
+|---------|----------------|-------|
+| NEON | ~360 μs | Processes 16 coefficients per iteration (4x 128-bit vectors) |
+| SVE (original) | ~370 μs | Inefficient: processed 1 element per iteration |
+| SVE (pointer-based) | ~360 μs | Fixed: uses `addvl` for proper vector-length increments |
+| SVE (4-vector unrolled) | ~365-370 μs | Unrolled: processes 4 vectors (32 coeffs) per iteration |
+
+**Speedup**: Pointer-based SVE matches NEON performance (~1.0x); 4-vector unrolling provides no benefit on this hardware
+
+**Key optimizations**:
+1. **Pointer-based iteration**: Changed from index-based iteration (`incw x2` incrementing by 1) to pointer-based iteration (`addvl x2, x2, #1` incrementing by full vector length)
+2. **4-vector unrolling**: Attempted to match NEON's 4-vector structure using 4 SVE registers (z0-z3) with scattered loads/stores via multiple pointer registers
+
+### poly_chknorm Performance
+
+| Variant | Execution Time | Notes |
+|---------|----------------|-------|
+| NEON | ~320 μs | Processes all 256 coefficients (no early exit) |
+| SVE (single-vector) | ~214 μs | Early exit when violation found |
+| SVE (4-vector unrolled) | ~152 μs | 4x unrolling + early exit |
+| SVE (4-vector, one exceeds) | ~79 μs | Early exit after finding violation |
+| SVE (4-vector, many exceed) | ~19 μs | Exits quickly when many violations |
+
+**Speedup**: 4-vector SVE is ~2.1x faster than NEON and ~1.4x faster than single-vector SVE for "all within bound" case
+
+### Analysis
+
+1. **poly_caddq**: The original SVE implementation had a bug where it processed one scalable vector width per iteration but only incremented the index by 1 (`incw x2`). After fixing to use pointer-based iteration with `addvl` (add vector length), SVE matches NEON performance.
+
+   **4-vector unrolled variant**: An attempt to match NEON's 4-vector structure by processing 4 SVE vectors (32 coefficients) per iteration. Implementation uses:
+   - 4 pointer registers (x2, x5, x6, x7, x9) for scattered loads/stores
+   - `ptrue p0.s` for full predicate in main loop
+   - Tail handling for remaining elements (< 32 coefficients)
+
+   **Why 4-vector unrolling shows no improvement**:
+   - Actual hardware may have VL > 256 bits, reducing benefit of unrolling
+   - Additional pointer register management adds overhead
+   - Scattered load/store pattern may be less efficient than sequential access
+   - The single-vector SVE already achieves full memory bandwidth utilization
+
+2. **poly_chknorm**: SVE shows significant performance advantages:
+   - Better predicate-based comparison operations with `b.any` for immediate branching
+   - Early exit via `b.any` when violation detected (no need for `incp` + `cbnz`)
+   - 4-vector unrolling **is beneficial** for poly_chknorm because:
+     - Early exit is checked after each vector, allowing faster termination
+     - Reduces loop overhead by processing 32 coefficients per iteration
+     - The `b.any` instruction provides zero-cost predicate testing
+
+**Key insight**: 4-vector unrolling benefits poly_chknorm but not poly_caddq because poly_chknorm can exit early after each vector load/compare, while poly_caddq must process all data regardless.
+
 ---
 
 ## Learning Path

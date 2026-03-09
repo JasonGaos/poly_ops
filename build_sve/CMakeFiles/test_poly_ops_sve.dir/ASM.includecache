@@ -1,0 +1,14 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../common.h
+
+/home/gaojiahui/poly_ops/src/poly_chknorm_asm_sve.S
+common.h
+/home/gaojiahui/poly_ops/src/common.h
+

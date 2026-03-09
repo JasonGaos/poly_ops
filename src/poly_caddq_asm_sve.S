@@ -1,8 +1,7 @@
 /*
- * SVE implementation - testing instructions one by one
+ * SVE implementation of poly_caddq
  *
- * This file is a skeleton for SVE implementation of poly_caddq.
- * The NEON implementation is in poly_caddq_asm.S
+ * Optimized single-vector version: processes one full SVE vector width per iteration
  */
 
 #include "common.h"
@@ -19,23 +18,23 @@
 MLD_ASM_FN_SYMBOL(poly_caddq_asm_sve)
     // x0 = pointer to polynomial coefficients (int32_t *a)
     mov     w9, #0xe001
-    movk    w9, #0x7f, lsl #16
-    mov     z4.s, w9
+    movk    w9, #0x7f, lsl #16      // w9 = MLDSA_Q = 8380417
+    dup     z4.s, w9                // Broadcast Q to all lanes
 
-    mov     x2, #0
-    mov     x3, #256
+    mov     x2, x0                  // Current pointer
+    add     x3, x0, #1024           // End pointer (256 * 4 = 1024 bytes)
 
 poly_caddq_loop_sve:
-    whilelt p0.s, x2, x3
-    b.none poly_caddq_done
+    whilelt p0.s, x2, x3            // Predicate: active lanes where x2 < x3
+    b.none  poly_caddq_done         // Exit if no active lanes
 
-    ld1w    {z0.s}, p0/z, [x0,x2,lsl #2]
-    lsr     z5.s, z0.s, #31
-    mla     z0.s, p0/m, z5.s, z4.S
-    st1w    {z0.s}, p0, [x0, x2, lsl #2]
+    ld1w    {z0.s}, p0/z, [x2]      // Load scalable vector of coefficients
+    lsr     z5.s, z0.s, #31         // Extract sign bit (0 if >=0, 1 if <0)
+    mla     z0.s, p0/m, z5.s, z4.s  // z0 += z5 * Q (adds Q only if negative)
+    st1w    {z0.s}, p0, [x2]        // Store results back
 
-    incw    x2
-    b       poly_caddq_loop_sve  
+    addvl   x2, x2, #1              // Advance pointer by one SVE vector length
+    b       poly_caddq_loop_sve
 
 poly_caddq_done:
     ret
