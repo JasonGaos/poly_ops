@@ -18,60 +18,26 @@
     .balign 4
 MLD_ASM_FN_SYMBOL(poly_caddq_asm_sve)
     // x0 = pointer to polynomial coefficients (int32_t *a)
+    mov     w9, #0xe001
+    movk    w9, #0x7f, lsl #16
+    mov     z4.s, w9
 
-    // ============================================================
-    // PROLOGUE: Save SVE registers
-    // ============================================================
-    // Stack layout (growing down):
-    //   [sp-48] ... [sp-1]  : 48 bytes total
-    //   [sp-48]..[sp-17]    : z0 (32 bytes max, for 256-bit SVE)
-    //   [sp-16]..[sp-1]     : p0 (16 bytes, over-provisioned)
+    mov     x2, #0
+    mov     x3, #256
 
-    sub     sp, sp, #48             // Allocate 48 bytes on stack
+poly_caddq_loop_sve:
+    whilelt p0.s, x2, x3
+    b.none poly_caddq_done
 
-    // Save z0 first (vector register, VL bytes)
-    str     z0, [sp, #16]           // Save z0 at [sp+16]
+    ld1w    {z0.s}, p0/z, [x0,x2,lsl #2]
+    lsr     z5.s, z0.s, #31
+    mla     z0.s, p0/m, z5.s, z4.S
+    st1w    {z0.s}, p0, [x0, x2, lsl #2]
 
-    // Save p0 (predicate register)
-    str     p0, [sp]                // Save p0 at [sp]
+    incw    x2
+    b       poly_caddq_loop_sve  
 
-    // ============================================================
-    // FUNCTION BODY: Your SVE code here
-    // ============================================================
-    // Algorithm:
-    // For each of 256 coefficients:
-    //   if a[i] < 0:
-    //     a[i] += MLDSA_Q (8380417)
-    //
-    // SVE approach:
-    // 1. Load MLDSA_Q into a vector
-    // 2. Use predicate to identify negative coefficients
-    // 3. Add MLDSA_Q only to lanes where predicate is true
-
-    // TODO: Implement SVE version
-    // Key SVE instructions to use:
-    // - ptrue   : Set predicate to all true
-    // - ld1w    : Load words (32-bit values)
-    // - cmplt   : Compare less than (signed)
-    // - sel     : Select values based on predicate
-    // - st1w    : Store words
-
-    // Placeholder: just return for now
-    ptrue   p0.b                    // Modifies p0 (safe, we saved it)
-    eor     z0.b, z0.b, z0.b        // Modifies z0 (safe, we saved it)
-
-    // ============================================================
-    // EPILOGUE: Restore SVE registers (in REVERSE order!)
-    // ============================================================
-    // Restore p0 first (saved second, restore first)
-    ldr     p0, [sp]                // Restore p0 from [sp]
-
-    // Restore z0 last (saved first, restore last)
-    ldr     z0, [sp, #16]           // Restore z0 from [sp+16]
-
-    // Clean up stack
-    add     sp, sp, #48             // Deallocate 48 bytes
-
+poly_caddq_done:
     ret
 
 #endif /* MLD_ARITH_BACKEND_AARCH64 && !MLD_CONFIG_MULTILEVEL_NO_SHARED */

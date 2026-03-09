@@ -17,69 +17,34 @@
     .global MLD_ASM_NAMESPACE(poly_chknorm_asm_sve)
     .balign 4
 MLD_ASM_FN_SYMBOL(poly_chknorm_asm_sve)
-    // x0 = pointer to polynomial coefficients (const int32_t *a)
-    // x1 = bound B (int32_t)
+    mov     z2.s, w1
+    mov     z1.b, #0
+    mov     x2, #0
+    mov     x3, #256
+    mov     x4, #0
 
-    // ============================================================
-    // PROLOGUE: Save SVE registers
-    // ============================================================
-    // Stack layout (growing down):
-    //   [sp-48] ... [sp-1]  : 48 bytes total
-    //   [sp-48]..[sp-17]    : z0 (32 bytes max, for 256-bit SVE)
-    //   [sp-16]..[sp-1]     : p0, p1 (16 bytes, over-provisioned)
+poly_chknorm_loop_sve:
+    whilelt p0.s, x2, x3            /* p0 = (x2 < 256) 的谓词 */
+    b.none  poly_chknorm_done         /* 如果谓词全空，结束 */
 
-    sub     sp, sp, #48             // Allocate 48 bytes on stack
+    // load data to z0
+    ld1w    {z0.s}, p0/z, [x0, x2, lsl #2]
 
-    // Save z0 first
-    str     z0, [sp, #16]           // Save z0 at [sp+16]
+    // abs
+    abs     z0.s, p0/m, z0.s
 
-    // Save p0, p1
-    str     p0, [sp, #8]            // Save p0 at [sp+8]
-    str     p1, [sp]                // Save p1 at [sp]
+    // compare with beta
+    cmpge   p1.s, p0/z, z0.s, z2.s
 
-    // ============================================================
-    // FUNCTION BODY: Your SVE code here
-    // ============================================================
-    // Algorithm:
-    // Return 0 if all |a[i]| < B for i=0..255
-    // Return 1 if any |a[i]| >= B
-    //
-    // SVE approach:
-    // 1. Broadcast bound B to a vector
-    // 2. Load coefficients and compute absolute values
-    // 3. Compare |coeff| >= B using predicates
-    // 4. Reduce predicates to check if any was true
+    // count violation (return if found)
+    incp    x4, p1.s
+    cbnz    x4, poly_chknorm_done
 
-    // TODO: Implement SVE version
-    // Key SVE instructions to use:
-    // - ptrue   : Set predicate to all true
-    // - ld1w    : Load words (32-bit values)
-    // - abs     : Absolute value
-    // - cmpge   : Compare greater than or equal (signed)
-    // - pfirst  : Find first true element in predicate
-    // - orv     : OR-reduce predicate to boolean
-
-    // Placeholder: return 0 for now
-    ptrue   p0.b                    // Modifies p0 (safe, we saved it)
-    eor     z0.b, z0.b, z0.b        // Modifies z0 (safe, we saved it)
-
-    // ============================================================
-    // EPILOGUE: Restore SVE registers (in REVERSE order!)
-    // ============================================================
-    // Restore p1 first (saved last, restore first)
-    ldr     p1, [sp]                // Restore p1 from [sp]
-
-    // Restore p0
-    ldr     p0, [sp, #8]            // Restore p0 from [sp+8]
-
-    // Restore z0 last (saved first, restore last)
-    ldr     z0, [sp, #16]           // Restore z0 from [sp+16]
-
-    // Clean up stack
-    add     sp, sp, #48             // Deallocate 48 bytes
-
-    // Return 0 (placeholder)
-    mov     w0, #0
+    incw    x2
+    b       poly_chknorm_loop_sve
+poly_chknorm_done:
+    cmp     x4,#0
+    cset    w0,ne
     ret
 
 #endif /* MLD_ARITH_BACKEND_AARCH64 && !MLD_CONFIG_MULTILEVEL_NO_SHARED */
