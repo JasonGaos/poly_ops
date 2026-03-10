@@ -52,18 +52,17 @@ int mldsa_poly_chknorm_asm(const int32_t *a, int32_t B);
 ## File Structure
 
 ```
-.
-├── common.h                          # Shared macros for assembly and C
-├── Makefile                          # Build configuration
-├── test.c                            # Test suite
+├── CMakeLists.txt                      # Build configuration
+├── common.h                            # Shared macros for assembly and C
+├── test.c                              # Test suite
 └── src/
-    ├── poly_caddq_asm.S              # NEON implementation of poly_caddq
-    ├── poly_caddq_asm_sve.S          # SVE skeleton for poly_caddq
-    ├── poly_chknorm_asm.S            # NEON implementation of poly_chknorm
-    ├── poly_chknorm_asm_sve.S        # SVE skeleton for poly_chknorm
-    ├── poly_c.c                      # C reference implementations
+    ├── poly_caddq_asm.S                # NEON implementation of poly_caddq
+    ├── poly_caddq_asm_sve.S            # SVE implementation of poly_caddq
+    ├── poly_chknorm_asm.S              # NEON implementation of poly_chknorm
+    ├── poly_chknorm_asm_sve.S          # SVE implementation of poly_chknorm
+    ├── poly_c.c                        # C reference implementations
     └── include/
-        └── arith_native_aarch64.h   # Function declarations
+        └── arith_native_aarch64.h     # Function declarations
 ```
 
 ---
@@ -74,31 +73,35 @@ int mldsa_poly_chknorm_asm(const int32_t *a, int32_t B);
 
 - An AArch64 Linux system or ARM64 macOS system
 - GCC compiler with AArch64 support
-- Make utility
+- CMake
 
 ### Build Commands
 
 ```bash
-# Build NEON variant (default)
-make
+# Create build directory and configure (NEON variant, default)
+mkdir build && cd build
+cmake ..
 
-# Or explicitly
-make neon
+# Or configure SVE variant
+cmake -DBUILD_SVE=ON ..
 
-# Build SVE variant (requires SVE-capable hardware/emulator)
-make sve
+# Build configured variant
+cmake --build .
 
-# Build both variants
-make both
+# Run tests
+./test_poly_ops_neon     # NEON variant
+./test_poly_ops_sve      # SVE variant
+```
 
-# Build and run tests
-make run
+**Note**: To switch between NEON and SVE variants, either delete the `build/` directory and reconfigure, or use separate build directories (e.g., `build_neon/` and `build_sve/`).
 
-# Clean build artifacts
-make clean
+```bash
+# Recommended: separate build directories
+mkdir build_neon && cd build_neon
+cmake .. && cmake --build .
 
-# Show help
-make help
+mkdir build_sve && cd build_sve
+cmake -DBUILD_SVE=ON .. && cmake --build .
 ```
 
 ---
@@ -109,7 +112,7 @@ make help
 # Run NEON variant tests
 ./test_poly_ops_neon
 
-# Run SVE variant tests (if built)
+# Run SVE variant tests
 ./test_poly_ops_sve
 ```
 
@@ -152,63 +155,7 @@ make help
 2. **Vector Length**: SVE uses variable vector length (VL), use `whilelo` for exact bounds
 3. **Load/Store**: Use `ld1w`/`st1w` with predicate-gathering for exact element count
 4. **Conditional Operations**: Use predicates with `sel` instruction for conditional adds
-
-### 4-Vector Unrolled Pattern (Experimental)
-
-For matching NEON's 4-vector loop structure, use this pattern:
-
-**For poly_caddq (pointer-based scattered access)**:
-```asm
-// Setup: ptrue p0.s for full predicate in main loop
-// Use multiple pointer registers for scattered access
-mov     x5, x2                  // ptr0 = base
-add     x6, x2, #32             // ptr1 = base + 32 bytes (8 coeffs)
-add     x7, x2, #64             // ptr2 = base + 64 bytes (16 coeffs)
-add     x9, x2, #96             // ptr3 = base + 96 bytes (24 coeffs)
-
-// Load 4 vectors
-ld1w    {z0.s}, p0/z, [x5]
-ld1w    {z1.s}, p0/z, [x6]
-ld1w    {z2.s}, p0/z, [x7]
-ld1w    {z3.s}, p0/z, [x9]
-
-// ... process ...
-
-// Store 4 vectors
-st1w    {z0.s}, p0, [x5]
-st1w    {z1.s}, p0, [x6]
-st1w    {z2.s}, p0, [x7]
-st1w    {z3.s}, p0, [x9]
-
-add     x2, x2, #128            // Advance base by 128 bytes (32 coeffs)
-```
-
-**For poly_chknorm (indexed access, no early exit)**:
-```asm
-// Setup: x2 = loop counter, x3 = end pointer
-ptrue   p0.s                    // Full predicate for all lanes
-
-// Load 4 vectors using indexed addressing (8 coefficients each)
-ld1w    {z0.s}, p0/z, [x0, x2, lsl #2]      // coeffs x2 to x2+7
-add     x5, x2, #8
-ld1w    {z3.s}, p0/z, [x0, x5, lsl #2]      // coeffs x2+8 to x2+15
-add     x5, x2, #16
-ld1w    {z4.s}, p0/z, [x0, x5, lsl #2]      // coeffs x2+16 to x2+23
-add     x5, x2, #24
-ld1w    {z5.s}, p0/z, [x0, x5, lsl #2]      // coeffs x2+24 to x2+31
-
-// Absolute value and compare, accumulate results
-abs     z0.s, p0/m, z0.s
-cmpge   p1.s, p0/z, z0.s, z2.s
-eor     z0.d, z0.d, z0.d
-not     z0.b, p1/m, z0.b
-orr     z6.b, p0/m, z6.b, z0.b
-// ... repeat for z3, z4, z5 ...
-
-add     x2, x2, #32            // Advance index by 32 coefficients
-```
-
-**Note**: These patterns assume VL = 256 bits (8 int32_t per vector). Performance varies by hardware.
+5. **Pointer iteration**: Use `addvl` for pointer advancement, not `incw`
 
 ---
 
@@ -216,38 +163,16 @@ add     x2, x2, #32            // Advance index by 32 coefficients
 
 Test environment: AArch64 Linux, 10,000 iterations per measurement
 
-### poly_caddq Performance
+| Function | NEON | SVE (optimized) |
+|----------|------|-----------------|
+| `poly_caddq` | ~360 μs | ~360 μs |
+| `poly_chknorm` | ~320 μs | ~350 μs |
 
-| Variant | Execution Time | Notes |
-|---------|----------------|-------|
-| NEON | ~360 μs | Processes 16 coefficients per iteration (4x 128-bit vectors) |
-| SVE (original) | ~370 μs | Inefficient: processed 1 element per iteration |
-| SVE (pointer-based) | ~360 μs | Fixed: uses `addvl` for proper vector-length increments |
-| SVE (4-vector unrolled) | ~365-370 μs | Unrolled: processes 4 vectors (32 coeffs) per iteration |
-
-**Speedup**: Pointer-based SVE matches NEON performance (~1.0x); 4-vector unrolling provides no benefit on this hardware
-
-**Key optimizations**:
-1. **Pointer-based iteration**: Changed from index-based iteration (`incw x2` incrementing by 1) to pointer-based iteration (`addvl x2, x2, #1` incrementing by full vector length)
-2. **4-vector unrolling**: Attempted to match NEON's 4-vector structure using 4 SVE registers (z0-z3) with scattered loads/stores via multiple pointer registers
-
-### poly_chknorm Performance
-
-| Variant | Execution Time | Notes |
-|---------|----------------|-------|
-| NEON | ~320 μs | Processes all 256 coefficients |
-| SVE (optimized 4-vector) | ~350 μs | Matches NEON behavior (no early exit) |
-
-**Note**: SVE is ~10% slower than NEON when both process all coefficients without early exit, due to SVE's predicate handling overhead.
+**Note**: SVE matches NEON performance for `poly_caddq`. For `poly_chknorm`, SVE is ~10% slower due to predicate handling overhead when processing all coefficients without early exit.
 
 ### Analysis
 
 1. **poly_caddq**: The original SVE implementation had a bug where it processed one scalable vector width per iteration but only incremented the index by 1 (`incw x2`). After fixing to use pointer-based iteration with `addvl` (add vector length), SVE matches NEON performance.
-
-   **4-vector unrolled variant**: An attempt to match NEON's 4-vector structure by processing 4 SVE vectors (32 coefficients) per iteration. Implementation uses:
-   - 4 pointer registers (x2, x5, x6, x7, x9) for scattered loads/stores
-   - `ptrue p0.s` for full predicate in main loop
-   - Tail handling for remaining elements (< 32 coefficients)
 
    **Why 4-vector unrolling shows no improvement**:
    - Actual hardware may have VL > 256 bits, reducing benefit of unrolling
@@ -268,9 +193,14 @@ Test environment: AArch64 Linux, 10,000 iterations per measurement
 
 1. **Study the NEON implementation** in `src/poly_caddq_asm.S` and `src/poly_chknorm_asm.S`
 2. **Understand the algorithm** by reading the comments and C reference in `src/poly_c.c`
-3. **Read the SVE skeleton** in `src/poly_caddq_asm_sve.S` and `src/poly_chknorm_asm_sve.S`
-4. **Implement SVE version** instruction by instruction, testing as you go
-5. **Run tests** to verify correctness: `make run`
+3. **Read the SVE implementation** in `src/poly_caddq_asm_sve.S` and `src/poly_chknorm_asm_sve.S`
+4. **Build and run tests** to verify correctness:
+
+```bash
+mkdir build && cd build
+cmake .. && cmake --build .
+./test_poly_ops_neon
+```
 
 ---
 
