@@ -43,12 +43,14 @@ This is a test suite for two ML-DSA polynomial operations optimized with ARM NEO
 
 - **Use `addvl` for pointer iteration**: The original SVE implementation used `incw x2` (increment by 1) which only advanced the index by 1 element per iteration, causing redundant processing. Use `addvl x2, x2, #1` to advance by full vector length.
 - **4-vector unrolling for poly_caddq not beneficial**: Unlike NEON, unrolling to process 4 vectors per iteration shows no performance improvement on this hardware. The scattered load/store pattern with multiple pointer registers adds overhead that cancels any loop overhead reduction.
-- **4-vector unrolling for poly_chknorm IS beneficial**: Processing 4 vectors (32 coefficients) per iteration with early exit via `b.any` after each compare provides ~2.1x speedup over NEON.
-- **Early exit with `b.any`**: Using `cmpge` followed by `b.any` provides zero-cost predicate testing and immediate exit, faster than `incp` + `cbnz`.
+- **4-vector unrolling for poly_chknorm**: Processing 4 vectors (32 coefficients) per iteration matches NEON's loop structure. The current implementation processes all coefficients without early exit to match NEON behavior.
+- **Predicate handling**: SVE `cmpge` produces predicate registers, requiring conversion to vector masks via `eor` + `not` + `orr` for accumulation.
 
 ### Performance Summary
 
-| Function | NEON | SVE (single-vector) | SVE (4-vector) |
-|----------|------|---------------------|----------------|
-| `poly_caddq` | ~360 μs | ~360 μs | ~365-370 μs |
-| `poly_chknorm` | ~320 μs | ~214 μs (1.5x) | ~152 μs (2.1x) |
+| Function | NEON | SVE (optimized) |
+|----------|------|-----------------|
+| `poly_caddq` | ~360 μs | ~360 μs |
+| `poly_chknorm` | ~320 μs | ~350 μs |
+
+**Note**: SVE matches NEON performance for `poly_caddq`. For `poly_chknorm`, SVE is ~10% slower due to predicate handling overhead when processing all coefficients without early exit.

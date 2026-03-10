@@ -183,15 +183,10 @@ st1w    {z3.s}, p0, [x9]
 add     x2, x2, #128            // Advance base by 128 bytes (32 coeffs)
 ```
 
-**For poly_chknorm (indexed access with early exit)**:
+**For poly_chknorm (indexed access, no early exit)**:
 ```asm
-// Setup: x2 = index counter, x3 = 256 (total coefficients)
-// Check if 32 coefficients remain
-add     x5, x2, #32
-cmp     x5, x3
-b.gt    handle_tail
-
-ptrue   p0.s                    // Full predicate for 8 lanes
+// Setup: x2 = loop counter, x3 = end pointer
+ptrue   p0.s                    // Full predicate for all lanes
 
 // Load 4 vectors using indexed addressing (8 coefficients each)
 ld1w    {z0.s}, p0/z, [x0, x2, lsl #2]      // coeffs x2 to x2+7
@@ -202,10 +197,12 @@ ld1w    {z4.s}, p0/z, [x0, x5, lsl #2]      // coeffs x2+16 to x2+23
 add     x5, x2, #24
 ld1w    {z5.s}, p0/z, [x0, x5, lsl #2]      // coeffs x2+24 to x2+31
 
-// Absolute value and compare with early exit
+// Absolute value and compare, accumulate results
 abs     z0.s, p0/m, z0.s
 cmpge   p1.s, p0/z, z0.s, z2.s
-b.any   violation_found       // Exit immediately if any violation
+eor     z0.d, z0.d, z0.d
+not     z0.b, p1/m, z0.b
+orr     z6.b, p0/m, z6.b, z0.b
 // ... repeat for z3, z4, z5 ...
 
 add     x2, x2, #32            // Advance index by 32 coefficients
@@ -238,13 +235,10 @@ Test environment: AArch64 Linux, 10,000 iterations per measurement
 
 | Variant | Execution Time | Notes |
 |---------|----------------|-------|
-| NEON | ~320 μs | Processes all 256 coefficients (no early exit) |
-| SVE (single-vector) | ~214 μs | Early exit when violation found |
-| SVE (4-vector unrolled) | ~152 μs | 4x unrolling + early exit |
-| SVE (4-vector, one exceeds) | ~79 μs | Early exit after finding violation |
-| SVE (4-vector, many exceed) | ~19 μs | Exits quickly when many violations |
+| NEON | ~320 μs | Processes all 256 coefficients |
+| SVE (optimized 4-vector) | ~350 μs | Matches NEON behavior (no early exit) |
 
-**Speedup**: 4-vector SVE is ~2.1x faster than NEON and ~1.4x faster than single-vector SVE for "all within bound" case
+**Note**: SVE is ~10% slower than NEON when both process all coefficients without early exit, due to SVE's predicate handling overhead.
 
 ### Analysis
 
@@ -261,15 +255,12 @@ Test environment: AArch64 Linux, 10,000 iterations per measurement
    - Scattered load/store pattern may be less efficient than sequential access
    - The single-vector SVE already achieves full memory bandwidth utilization
 
-2. **poly_chknorm**: SVE shows significant performance advantages:
-   - Better predicate-based comparison operations with `b.any` for immediate branching
-   - Early exit via `b.any` when violation detected (no need for `incp` + `cbnz`)
-   - 4-vector unrolling **is beneficial** for poly_chknorm because:
-     - Early exit is checked after each vector, allowing faster termination
-     - Reduces loop overhead by processing 32 coefficients per iteration
-     - The `b.any` instruction provides zero-cost predicate testing
+2. **poly_chknorm**: Both NEON and SVE process all 256 coefficients without early exit.
+   - NEON uses `cmge` which directly produces bitmask results per lane
+   - SVE uses `cmpge` which produces predicates, requiring conversion via `not` + `orr`
+   - SVE's predicate handling adds ~10% overhead compared to NEON's simpler approach
 
-**Key insight**: 4-vector unrolling benefits poly_chknorm but not poly_caddq because poly_chknorm can exit early after each vector load/compare, while poly_caddq must process all data regardless.
+**Key insight**: For workloads that must process all data (no early exit), NEON's simpler instruction model can be more efficient than SVE's predicate-based approach. SVE's advantage lies in scenarios where early termination is allowed.
 
 ---
 
