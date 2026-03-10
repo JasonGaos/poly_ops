@@ -6,14 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 mkdir build && cd build
-cmake ..                 # Configure (NEON variant, default)
-cmake -DBUILD_SVE=ON ..  # Configure SVE variant
-cmake --build .          # Build configured variant
-./test_poly_ops_neon     # Run NEON variant
-./test_poly_ops_sve      # Run SVE variant
+cmake ..                 # Configure (builds both NEON and SVE)
+cmake --build .          # Build single binary with both variants
+./test_poly_ops          # Run tests for both NEON and SVE
 ```
 
-**Note**: CMake caches the configuration. To switch variants, either delete `build/` and reconfigure, or use separate build directories (e.g., `build_neon/` and `build_sve/`).
+**Note**: The single `test_poly_ops` binary contains both NEON and SVE implementations and runs tests for both, comparing results against the C reference implementation.
 
 ## Architecture Overview
 
@@ -30,7 +28,7 @@ This is a test suite for two ML-DSA polynomial operations optimized with ARM NEO
   - `poly_caddq_asm.S` / `poly_caddq_asm_sve.S` - NEON/SVE implementations
   - `poly_chknorm_asm.S` / `poly_chknorm_asm_sve.S` - NEON/SVE implementations
   - `include/arith_native_aarch64.h` - Function declarations
-- `test.c` - Test suite comparing assembly vs C reference with timing
+- `test.c` - Test suite comparing NEON, SVE, and C reference implementations with timing
 
 ### Key Patterns
 
@@ -48,9 +46,9 @@ This is a test suite for two ML-DSA polynomial operations optimized with ARM NEO
 
 ### Performance Summary
 
-| Function | NEON | SVE (optimized) |
-|----------|------|-----------------|
-| `poly_caddq` | ~360 μs | ~360 μs |
-| `poly_chknorm` | ~320 μs | ~350 μs |
+| Function | NEON | SVE |
+|----------|------|-----|
+| `poly_caddq` | ~361 μs | ~385 μs |
+| `poly_chknorm` | ~320 μs | ~407 μs |
 
-**Note**: SVE matches NEON performance for `poly_caddq`. For `poly_chknorm`, SVE is ~10% slower due to predicate handling overhead when processing all coefficients without early exit.
+**Note**: NEON outperforms SVE on this hardware. For `poly_caddq`, NEON is ~6% faster. For `poly_chknorm`, NEON is ~27% faster. The SVE implementation has overhead from predicate handling and scattered load/store patterns that cancel any benefits from scalable vectors.
